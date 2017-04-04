@@ -52,6 +52,7 @@ install_collectd(){
   apt-get install -yq collectd
   grep -q "^LoadPlugin network" $COLLECTD || sed -i '/LoadPlugin network/s/^#//' $COLLECTD
   grep -q "^LoadPlugin write_graphite" $COLLECTD || sed -i '/LoadPlugin write_graphite/s/^#//' $COLLECTD
+  grep -q "^LoadPlugin statsd" $COLLECTD || sed -i '/LoadPlugin statsd/s/^#//' $COLLECTD
   if ! [ -f $COLLECTD_LUG ]; then
 cat <<EOF > $COLLECTD_LUG
 <Plugin "network">
@@ -67,37 +68,20 @@ cat <<EOF > $COLLECTD_LUG
     StoreRates true
     AlwaysAppendDS false
     EscapeCharacter "_"
+    Prefix "collectd."
   </Node>
 </Plugin>
 
-LoadPlugin syslog
-LoadPlugin battery
-LoadPlugin cgroups
-LoadPlugin conntrack
-LoadPlugin contextswitch
-LoadPlugin cpu
-LoadPlugin cpufreq
+<Plugin statsd>
+  Host "0.0.0.0"
+  Port "8125"
+  DeleteSets true
+</Plugin>
+
+LoadPlugin network
 LoadPlugin df
-LoadPlugin disk
-LoadPlugin entropy
-LoadPlugin ethstat
-LoadPlugin exec
-LoadPlugin filecount
-LoadPlugin interface
-LoadPlugin iptables
-LoadPlugin irq
-LoadPlugin load
-LoadPlugin lvm
-LoadPlugin memory
-LoadPlugin netlink
-LoadPlugin processes
-LoadPlugin protocols
-LoadPlugin swap
-LoadPlugin tcpconns
-LoadPlugin unixsock
-LoadPlugin uptime
-LoadPlugin users
-LoadPlugin vmem
+LoadPlugin write_graphite
+LoadPlugin statsd
 EOF
   fi
 }
@@ -155,10 +139,63 @@ cat <<EOF > /etc/carbon/storage-schemas.conf
 pattern = ^carbon\.
 retentions = 60:90d
 
+[test]
+pattern = ^test\.
+retentions = 10s:10m,1m:1h,10m:1d
+
+[collectd]
+pattern = ^collectd.*
+retentions = 10s:1d,1m:7d
+
+[statsd]
+pattern = ^statsd.*
+retentions = 10s:1d,1m:7d
 
 [default]
 pattern = .*
-retentions = 5s:30d,1m:60d,5m:1y,10m:5y
+retentions = 5s:30d
+EOF
+
+cat <<EOF > /etc/carbon/storage-aggregation.conf
+[min]
+pattern = \.min$
+xFilesFactor = 0.1
+aggregationMethod = min
+
+[max]
+pattern = \.max$
+xFilesFactor = 0.1
+aggregationMethod = max
+
+[count]
+pattern = \.count$
+xFilesFactor = 0
+aggregationMethod = sum
+
+[lower]
+pattern = \.lower(_\d+)?$
+xFilesFactor = 0.1
+aggregationMethod = min
+
+[upper]
+pattern = \.upper(_\d+)?$
+xFilesFactor = 0.1
+aggregationMethod = max
+
+[sum]
+pattern = \.sum$
+xFilesFactor = 0
+aggregationMethod = sum
+
+[gauges]
+pattern = ^.*\.gauges\..*
+xFilesFactor = 0
+aggregationMethod = last
+
+[default_average]
+pattern = .*
+xFilesFactor = 0.5
+aggregationMethod = average
 EOF
 
 /usr/bin/expect <<EOF
@@ -178,7 +215,7 @@ EOF
 }
 
 services(){
-  service collectd restart
+  service collectd stop
   service carbon-cache start
   service apache2 reload
 }
